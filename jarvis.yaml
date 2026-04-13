@@ -1,0 +1,99 @@
+# ============================================================
+# Jarvis AI Assistant — Central Configuration
+# ============================================================
+# All module-level settings are defined here.
+# Paths support ~ for home directory expansion.
+# ============================================================
+
+assistant:
+  name: "Jarvis"
+  wake_word: "jarvis"
+  language: "en"
+  follow_up_timeout: 12        # seconds to stay listening after a command
+  command_timeout: 30           # max seconds for processing before auto-idle
+
+audio:
+  device_index: null            # null = auto-detect default mic
+  sample_rate: 16000
+  channels: 1
+  chunk_size: 1280              # 80ms chunks at 16kHz (good for wake word)
+  energy_threshold: 200
+  ambient_adjust_duration: 0.5  # seconds to calibrate ambient noise
+
+wake_word:
+  engine: "openwakeword"
+  model: "hey_jarvis"           # OpenWakeWord model name
+  sensitivity: 0.2              # 0.0 (most sensitive) to 1.0 (least)
+  cooldown: 2.0                 # seconds to ignore after activation
+
+stt:
+  engine: "faster-whisper"
+  model_size: "base.en"           # tiny, base, small, medium, large
+  language: "en"
+  fallback: "google"            # fallback STT engine
+  fallback_language: "en-IN"
+  vad_silence_duration: 2.0     # seconds of silence to end recording
+  max_recording_duration: 15    # max seconds per utterance
+
+tts:
+  engine: "piper"
+  voice: "/home/linuxuser/.local/share/piper/en_US-kristin-medium.onnx"   # Indian English Piper voice
+  fallback: "espeak"
+  rate: 0.9                     # speech rate (< 1.0 = slower/smoother)
+  output_device: null           # null = default audio output
+
+llm:
+  provider: "ollama"
+  base_url: "http://localhost:11434"
+  model: "phi3:mini"
+  # model: "gemma3:270m"
+  temperature: 0.2
+  max_tokens: 128
+  timeout: 120                   # seconds before LLM timeout
+  system_prompt_file: null      # null = use built-in prompt
+
+memory:
+  db_path: "~/.local/share/jarvis/memory.db"
+  max_interactions: 10000       # purge oldest beyond this
+  context_window: 10            # recent interactions for LLM context
+  preference_decay_days: 90     # re-evaluate old preferences
+
+security:
+  voice_auth_enabled: true
+  voiceprint_path: "~/.local/share/jarvis/voiceprint.npy"
+  auth_threshold: 0.55
+  # Actions requiring voice authentication
+  sensitive_actions:
+    - "file.delete"
+    - "file.write"
+    - "system.shutdown"
+    - "system.reboot"
+    - "system.sudo"
+    - "process.kill"
+    - "network.toggle"
+
+ui:
+  enabled: true
+  position: "top-right"          # top-left, top-right, bottom-left, bottom-right
+  margin_x: 20                  # pixels from screen edge
+  margin_y: 20
+  opacity: 0.92
+  width: 200
+  height: 60
+  animations: true
+
+web:
+  search_engine: "duckduckgo"
+  max_results: 5
+  cache_ttl: 3600               # seconds to cache search results
+  user_agent: "Jarvis/1.2.0"
+
+automation:
+  workflows_dir: "~/.local/share/jarvis/workflows"
+  max_concurrent_steps: 3
+
+logging:
+  level: "INFO"                 # DEBUG, INFO, WARNING, ERROR
+  file: "~/.local/share/jarvis/jarvis.log"
+  max_size_mb: 10
+  backup_count: 3
