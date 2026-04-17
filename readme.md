@@ -1,86 +1,140 @@
-# Jarvis AI Assistant — Project Summary
+# 🎙️ Jarvis: Privacy-First, Offline AI Assistant for Linux
 
-This document provides a comprehensive overview of the `jarvis` project repository up to the current state. It serves as a context guide detailing the architecture, module responsibilities, control flows, and key configurations.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange.svg)](https://www.kernel.org/)
 
-## Architecture Overview
-
-Jarvis is a modular, offline-first, continuous-listening AI assistant for Linux desktops (designed specifically with Fedora/GNOME in mind). The application uses a completely async, **event-driven architecture** relying on an internal pub-sub Event Bus. This ensures decoupled modules, concurrent processing, and a highly responsive user experience. 
-
-The system relies on a central **State Machine** (`StateManager`) that transitions across various modes: `IDLE`, `LISTENING`, `PROCESSING`, `RESPONDING`, and `ERROR`. 
-
-### State Machine Flow
-- **`IDLE`**: Awaiting wake word. The audio pipeline feeds 16kHz audio chunks solely to the wake word detector (minimal CPU footprint).
-- **`LISTENING`**: Triggered by the wake word. The microphone actively buffers audio. A Voice Activity Detector (VAD) monitors RMS energy, and when significant silence follows speech, the buffer is dispatched to the Speech-to-Text (STT) engine. Co-currently, an asynchronous TTS acknowledgment ("Yeah?", "I'm listening") is triggered.
-- **`PROCESSING`**: Audio is evaluated by the intent router (Regex fast-matches semantic natural language matches, or LLM evaluation). An action is triggered from the Action Registry.
-- **`RESPONDING`**: The TTS engine speaks the response. The TTS is interruptible if the user speaks again. 
-- **`ERROR`**: Failsafe state that auto-recovers to `IDLE`.
+**Jarvis** is a modular, high-performance, and privacy-centric AI assistant designed specifically for the Linux desktop (optimized for Fedora/GNOME). Unlike traditional assistants that rely on cloud APIs, Jarvis operates on an **offline-first** philosophy, performing speech recognition, intent parsing, and neural speech synthesis entirely on your local hardware.
 
 ---
 
-## Core Components (`core/`)
+## ✨ Key Features
 
-- **`main.py`**: The application orchestrator. Bootstraps configuration, initializes the `StateManager` and sub-modules lazily (Audio, Actions, Brain, Voice, UI, Memory). Starts the async event loop and manages graceful shutdown.
-- **`events.py`**: The `EventBus` singleton. Manages the pub-sub system spanning `WAKE_WORD`, `SPEECH_TEXT`, `INTENT_PARSED`, `ACTION_COMPLETE`, `TTS_START`, `STATE_CHANGE` etc., allowing decoupled system updates.
-- **`state_manager.py`**: A strict state machine overseeing timeout mechanics (e.g., returning to `IDLE` after 12s of conversational silence or 30s of dead processing). Triggers initial fire-and-forget randomized voice acknowledgments upon waking.
-
----
-
-## Audio Pipeline (`audio/`)
-
-- **`listener.py` (`AudioPipeline`)**: The continuous PyAudio capture loop. Handles device assignment, constant buffer rotation, RMS-energy calculation for VAD (dynamic noise floor thresholding), and feeds raw audio chunks to either the wake word module or the STT buffer depending on the system `State`.
-- **`wake_word.py` (`WakeWordDetector`)**: Leverages `openwakeword` with the `hey_jarvis` ONNX model. Efficiently evaluates 1-second audio sliding windows at a configured sensitivity index to spot wake triggers without cloud latency.
-- **`stt.py` (`STTEngine`)**: A hybrid engine. It prefers local, offline processing via `faster-whisper` (default: `base.en`). If local processing fails, it falls back to a network call using Google's Speech Recognition API. 
+- **🛡️ Privacy by Design**: All voice processing (STT), reasoning (LLM), and speech (TTS) happen locally. No audio data ever leaves your machine.
+- **⚡ Hybrid Intent Engine**: A three-tier routing system that combines high-speed Regex/Semantic matching with a sophisticated LLM fallback (via Ollama).
+- **🎤 Neural Voice Interface**: 
+    - **STT**: Powered by `faster-whisper` for near-instant, high-accuracy transcription.
+    - **TTS**: High-quality, interruptible neural speech synthesis using `Piper`.
+- **🛠️ Desktop Integration**: Native GNOME extension and overlay for visual feedback and seamless system control.
+- **🔒 Secure Auth**: Voiceprint authentication for sensitive operations like `sudo` or file deletion.
+- **🔄 Event-Driven Architecture**: Fully asynchronous Core built on a central Event Bus, ensuring zero-latency response times.
 
 ---
 
-## The "Brain" (`brain/`)
+## 🏗️ Technical Architecture
 
-- **`intent_parser.py` (`IntentRouter`)**: The routing layer for converting raw transcripts into executable actions. Work flows in three hierarchical layers:
-  1. **Semantic Fast Match Layer**: Extremely fast keyword detection with specific verbs to open web tools directly (e.g., "login to my instagram", "search for Python tutorials", "open YouTube"). 
-  2. **Regex Fast Path**: High-priority OS/media commands matched by Regex (e.g., "volume up", "pause music", "silent mode").
-  3. **Contextual LLM Fallback**: If natural language routing fails, the prompt is injected alongside recent conversation history to the LLM. LLM output validation acts as a powerful safety gate by dropping hallucinatory actions / parameter leaks.
-- **`llm.py` (`LLMClient`)**: Client to communicate with an external AI inference tool via Ollama HTTP APIs (configured by default to locally hosted `phi3:mini`). Requires STRICT JSON output mode.
-- **`prompts.py`**: Defines `SYSTEM_PROMPT` designed to constrain the LLM into ONLY responding with a strict JSON interface (`action`, `params`, `response`). Contains heavily weighted few-shot examples prohibiting credential extraction or undefined functionalities.
-- **`context.py` (`ContextManager`)**: Keeps track of recent conversational history (sliding window queue), and injects real-time information (Current Time, Active User Mode) into the prompt.
+Jarvis follows a strictly decoupled, **Pub-Sub Event-Driven** design.
 
----
-
-## Action Execution (`actions/`)
-
-- **`action_registry.py` (`ActionRegistry`)**: The central hub where feature modules register actionable commands. The router cross-verifies LLM outputs via `.get_action_names()` to prevent unknown commands from executing. Contains a fuzzy-matching logic to gracefully resolve slight LLM typos (e.g., "play_music" -> "media.play").
-- **`apps.py`**: Handles finding and opening applications via XDG Desktop Entries or explicit aliases, includes URL routing capabilities into browser setups.
-- Additional internal modules support `media.py`, `system.py`, `web_search.py`, `automation.py` capabilities.
+### The Lifecycle of a Request
+1.  **Wake**: The `AudioPipeline` feeds 16kHz chunks to the `WakeWordDetector` (Vosk/openWakeWord).
+2.  **Listen**: Upon trigger, the system shifts to `LISTENING` mode. An interruptible "Yeah?" acknowledgement plays while the microphone buffers speech.
+3.  **Transcribe**: Silence detection (VAD) triggers `STTEngine` (Whisper) to convert audio to text.
+4.  **Think**: The `IntentRouter` evaluates the text:
+    - **Tier 1**: Semantic Fast Match (Keyword verbs).
+    - **Tier 2**: Regex Path (System/Media controls).
+    - **Tier 3**: Contextual LLM (Ollama/Phi-3) for complex natural language.
+5.  **Act**: The `ActionRegistry` executes the resolved command (App launch, volume control, web search, etc.).
+6.  **Speak**: `TTSEngine` provides verbal confirmation via neural synthesis.
 
 ---
 
-## Voice Output (`voice/`)
+## 🛠️ Tech Stack
 
-- **`tts.py` (`TTSEngine`)**: Asynchronous, highly responsive queue-based speech system. Prioritizes the neural `piper` local TTS engine (which applies a `sox` lowpass filtering layer for smoother playback). Features a hard interruptible fallback logic (e.g., if the user interrupts the response before it finishes via `SPEECH_START` or `WAKE_WORD`).
-- **`responses.py`**: A centralized pooling system supplying randomly selected variations of wake acknowledgments (ranging from short snips like "Yeah?" (highly weighted) to conversational phrases like "How can I help?"). Ensures dynamic assistant personality. 
-
----
-
-## User Interface (`ui/`)
-
-- **`overlay.py` / `ui_bridge.py`**: A graphical desktop overlay capable of rendering notifications and internal system states (like LISTENING or PROCESSING indicators), communicating alongside the event bus on a separate process.
+- **Core**: Python 3.10+, `asyncio`
+- **Audio**: `PyAudio`, `Vosk` / `openWakeWord`
+- **STT**: `faster-whisper` (CTranslate2)
+- **LLM**: `Ollama` (default: `phi3:mini`)
+- **TTS**: `Piper` (ONNX Runtime)
+- **UI**: GNOME Shell Extension (JavaScript), Python Overlay (Gtk/Qt)
 
 ---
 
-## Configuration (`jarvis.yaml`)
+## 🚀 Getting Started
 
-The entire assistant lifecycle logic is parameterized within the central `/jarvis.yaml` file:
-- **Audio Tuning**: Chunk sizing, `energy_threshold` adjustments, OpenWakeWord sensitivity/cooldowns.
-- **Model Adjustments**: Choosing active Whisper models (`base.en`), LLM parameters (`phi3:mini`, temperatures), and local pathings pointing towards `.onnx` TTS voices.
-- **Security Checklists**: Voiceprint authentication and arrays isolating high risk processes (e.g `system.sudo`, `file.delete`) that force system auth thresholds.
+### Prerequisites
+- Linux (Fedora/GNOME recommended)
+- Python 3.10 or higher
+- [Ollama](https://ollama.com/) installed and running (`ollama run phi3:mini`)
+- `piper-tts` and `ffmpeg` installed on your system.
+
+### Installation
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/jarvis.git
+   cd jarvis
+   ```
+
+2. **Set up Virtual Environment**:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. **Install GNOME Extension** (Optional):
+   ```bash
+   cd ui/gnome-extension
+   ./install_extension.sh
+   ```
+
+4. **Configure**:
+   Edit `jarvis.yaml` to match your hardware paths (especially TTS voice paths and Mic indices).
 
 ---
 
-## Expected Information Lifecycle (A typical request)
+## ⚙️ Configuration (`jarvis.yaml`)
 
-1. **WAKE**: User says "Hey Jarvis". `listener.py` captures chunk -> `wake_word.py` evaluates -> emits `WAKE_WORD` event.
-2. **ACKNOWLEDGE**: `state_manager.py` catches `WAKE_WORD` -> shifts mode to `LISTENING` -> `asyncio.create_task` fires `responses.py` to play short TTS "Yeah?", keeping microphone un-blocked.
-3. **TRANSCRIBE**: User says "Login to Instagram". `listener.py` spots Voice Activity, then records silence. Buffer passes to `stt.py` (`faster-whisper`), returning text.
-4. **THINK**: Text hits `intent_parser.py`. The **Semantic Fast Match Layer** catches "Instagram" + "Login" keyword verbs.
-5. **DO**: Intent routing constructs `{ "action": "app.open", "params": { "url": "..."} }` bypassing the LLM entirely -> sends to `action_registry.py`.
-6. **ACT**: `apps.py` catches the parameters and leverages `subprocess` to launch the browser UI target URL. Event emits `ACTION_COMPLETE`.
-7. **SPEAK**: Finally `tts.py` acknowledges the action completed with a final neural TTS output "Opening Instagram login page". Uptime gracefully falls back into `IDLE`.
+Jarvis is highly customizable via the central configuration file:
+
+```yaml
+assistant:
+  wake_word: "jarvis"
+  follow_up_timeout: 12  # Seconds to keep listening
+
+stt:
+  model_size: "base.en"  # tiny, base, small, medium
+  fallback: "google"     # Cloud fallback if offline fails
+
+llm:
+  model: "phi3:mini"
+  temperature: 0.2
+
+security:
+  voice_auth_enabled: true
+  sensitive_actions: ["system.sudo", "file.delete"]
+```
+
+---
+
+## 📁 Project Structure
+
+```text
+├── core/             # Application lifecycle & Event Bus
+├── audio/            # Wake word & Microphone processing
+├── brain/            # Intent parsing & LLM integration
+├── actions/          # Extensible command modules (Apps, Media, Sys)
+├── voice/            # STT and Neural TTS engines
+├── ui/               # GNOME Extension & Desktop Overlay
+├── data/             # Local models (Vosk, Wake Word)
+└── tests/            # Pytest suite
+```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Whether it's adding new `actions/`, improving the `brain/` logic, or enhancing the `ui/`. 
+1. Fork the repo.
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your changes.
+4. Push to the branch.
+5. Open a Pull Request.
+
+---
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+---
+*Built with ❤️ for the Linux Community.*
